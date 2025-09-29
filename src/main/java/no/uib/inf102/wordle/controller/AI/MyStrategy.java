@@ -2,17 +2,24 @@ package no.uib.inf102.wordle.controller.AI;
 
 import java.util.*;
 import no.uib.inf102.wordle.model.Dictionary;
-import no.uib.inf102.wordle.model.word.WordleWord;
 import no.uib.inf102.wordle.model.word.WordleAnswer;
+import no.uib.inf102.wordle.model.word.WordleWord;
+import no.uib.inf102.wordle.model.word.WordleWordList;
 
-public class MyStrategy extends FrequencyStrategy {
+public class MyStrategy implements IStrategy {
 
-    private static final int EXPLOIT_THRESHOLD = 12;
-    private static final int TOP_GUESSES_LIMIT = 40;
-    private static final int ENTROPY_SAMPLE_SIZE = 150;
+    private final Dictionary dictionary;
+    private WordleWordList currentWords;
+    private final FrequencyStrategy freqStrategy;
+
+    private static final int PARTITION_SWITCH = 150;
+    private static final int FREQ_SWITCH = 10;
+    private static final int PROBE_K = 40;
+    private static final double POS_WEIGHT = 0.3;
 
     public MyStrategy(Dictionary dictionary) {
-        super(dictionary);
+        this.dictionary = dictionary;
+        this.freqStrategy = new FrequencyStrategy(dictionary);
         reset();
     }
 
@@ -20,172 +27,151 @@ public class MyStrategy extends FrequencyStrategy {
     public String makeGuess(WordleWord feedback) {
         if (feedback != null) {
             currentWords.eliminateWords(feedback);
+            freqStrategy.currentWords.eliminateWords(feedback);
         }
 
-        int m = currentWords.size();
-        if (m == 0) {
-            throw new IllegalStateException("No candidates left");
+        List<String> possibleAnswers = currentWords.possibleAnswers();
+        int n = currentWords.size();
+        if (n == 0)
+            throw new IllegalStateException("No possible answers remain");
+        if (n == 1)
+            return possibleAnswers.get(0);
+        if (n <= FREQ_SWITCH) {
+            return freqStrategy.makeGuess(null);
         }
-        if (m == 1) {
-            return currentWords.possibleAnswers().get(0);
+        if (n <= PARTITION_SWITCH) {
+            List<String> pool = buildGuessPool(possibleAnswers, PROBE_K);
+            return bestByPartitionOverPool(possibleAnswers, pool);
+        } else {
+            return bestByDistinctLetterFreq(possibleAnswers);
         }
-        if (m <= EXPLOIT_THRESHOLD) {
-            return super.makeGuess(null);
+    }
+
+    @Override
+    public void reset() {
+        currentWords = new WordleWordList(dictionary);
+        freqStrategy.reset();
+    }
+
+    private String bestByDistinctLetterFreq(List<String> candidates) {
+        int[] letterCounts = buildLetterCounts(candidates);
+        List<Map<Character, Integer>> posCounts = freqStrategy.buildPositionCounts(candidates,
+                currentWords.wordLength());
+
+        List<String> pool = dictionary.getGuessWordsList();
+
+        String best = pool.get(0);
+        double bestScore = scoreHybrid(best, letterCounts, posCounts);
+
+        for (int i = 1; i < pool.size(); i++) {
+            String w = pool.get(i);
+            double s = scoreHybrid(w, letterCounts, posCounts);
+            if (s > bestScore) {
+                bestScore = s;
+                best = w;
+            }
         }
-        List<String> candidates = currentWords.possibleAnswers();
-        int wordLength = currentWords.wordLength();
+        return best;
+    }
 
-        List<String> guesses = (dictionary.getGuessWordsList() != null)
-                ? dictionary.getGuessWordsList()
-                : candidates;
+    private double scoreHybrid(String word, int[] letterCounts, List<Map<Character, Integer>> posCounts) {
+        boolean[] seen = new boolean[26];
+        int wordLength = word.length();
+        int sumLetters = 0;
+        int sumPos = 0;
 
-        boolean[] allowed = allowedLettersMask(candidates);
-        guesses = filterByAllowedLetters(guesses, allowed);
-
-        List<Map<Character, Integer>> posCounts = buildPositionCounts(candidates, wordLength);
-        int[] letterPresence = buildLetterPresenceCounts(candidates);
-        List<Map<Character, Double>> posEntropy = new ArrayList<>(wordLength);
-        double[] letterEntropy = new double[26];
         for (int i = 0; i < wordLength; i++) {
-            Map<Character, Integer> counts = posCounts.get(i);
-            Map<Character, Double> entropyByLetter = new HashMap<>(counts.size());
-            for (Map.Entry<Character, Integer> e : counts.entrySet()) {
-                double probability = e.getValue() / (double) m;
-                entropyByLetter.put(e.getKey(), probability * (1 - probability));
+            char c = word.charAt(i);
+            if (c < 'a' || c > 'z')
+                continue;
+            int idx = c - 'a';
+
+            if (!seen[idx]) {
+                seen[idx] = true;
+                sumLetters += letterCounts[idx];
             }
-            posEntropy.add(entropyByLetter);
+
+            sumPos += posCounts.get(i).getOrDefault(c, 0);
         }
-        for (int i = 0; i < 26; i++) {
-            double probability = letterPresence[i] / (double) m;
-            letterEntropy[i] = probability * (1 - probability);
-        }
-
-        double posWeight = (m > 50) ? 0.50 : 0.65;
-        List<String> topGuesses = rankTopK(guesses, posEntropy, letterEntropy, posWeight, wordLength, m,
-                TOP_GUESSES_LIMIT);
-
-        String chosen = pickByBucketEntropy(topGuesses, candidates, ENTROPY_SAMPLE_SIZE);
-
-        if (m <= 3 && !candidates.contains(chosen))
-            return candidates.get(0);
-        return chosen;
+        return (sumLetters + POS_WEIGHT * sumPos) / Math.max(1, wordLength);
     }
 
-    private boolean[] allowedLettersMask(List<String> candidates) {
-        boolean[] allowed = new boolean[26];
-        for (String candidate : candidates)
-            for (int i = 0; i < candidate.length(); i++) {
-                int pos = candidate.charAt(i) - 'a';
-                if (0 <= pos && pos < 26) {
-                    allowed[pos] = true;
-                }
-            }
-        return allowed;
-    }
-
-    private List<String> filterByAllowedLetters(List<String> guesses, boolean[] allowed) {
-        ArrayList<String> filtered = new ArrayList<>(guesses.size());
-        for (String g : guesses) {
-            boolean ok = true;
-            for (int i = 0; i < g.length(); i++) {
-                int idx = g.charAt(i) - 'a';
-                if (0 <= idx && idx < 26 && !allowed[idx]) {
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok) {
-                filtered.add(g);
-            }
-        }
-        return filtered;
-    }
-
-    private List<String> rankTopK(List<String> guessPool, List<Map<Character, Double>> positionEntropy,
-            double[] globalEntropy,
-            double localWeight, int wordLength, int m, int maxResults) {
-        ArrayList<Map.Entry<String, Double>> scoredGuesses = new ArrayList<>(guessPool.size());
-        for (String guess : guessPool) {
-            boolean[] seen = new boolean[26];
-            int uniqueCount = 0;
-            double posScore = 0, letterScore = 0;
-            for (int pos = 0; pos < wordLength; pos++) {
-                char letter = guess.charAt(pos);
-                int idx = letter - 'a';
-                if (0 <= idx && idx < 26) {
-                    Double contrib = positionEntropy.get(pos).get(letter);
-                    if (contrib != null) {
-                        posScore += contrib;
-                    }
-                    if (!seen[idx]) {
-                        seen[idx] = true;
-                        uniqueCount++;
-                        letterScore += globalEntropy[idx];
-                    }
-                }
-            }
-            double duplicatePenalty = (guess.length() - uniqueCount) * (m > 25 ? 2.0 : 1.0);
-            double score = localWeight * posScore + (1 - localWeight) * letterScore - duplicatePenalty;
-            scoredGuesses.add(Map.entry(guess, score));
-        }
-        scoredGuesses.sort((entryA, entryB) -> Double.compare(entryB.getValue(), entryA.getValue()));
-        int limit = Math.min(maxResults, scoredGuesses.size());
-        ArrayList<String> topGuesses = new ArrayList<>(limit);
-        for (int idx = 0; idx < limit; idx++)
-            topGuesses.add(scoredGuesses.get(idx).getKey());
-        return topGuesses;
-    }
-
-    private String pickByBucketEntropy(List<String> guesses, List<String> answers, int cap) {
-        int answerCount = answers.size();
-        int step = (answerCount > cap) ? Math.max(1, answerCount / cap) : 1;
-        String bestGuess = guesses.get(0);
-        double bestEntropy = -1.0;
-        double bestExpectedRemaining = Double.POSITIVE_INFINITY;
-        final double INV_LN2 = 1.0 / Math.log(2);
-
-        for (String guess : guesses) {
-            HashMap<WordleWord, Integer> buckets = new HashMap<>();
-            for (int i = 0; i < answerCount; i += step) {
-                String answer = answers.get(i);
-                WordleWord pattern = WordleAnswer.matchWord(guess, answer);
-                buckets.merge(pattern, 1, Integer::sum);
-            }
-            double entropy = 0.0;
-            long sumSquares = 0;
-            int totalSamples = 0;
-            for (int count : buckets.values()) {
-                totalSamples += count;
-            }
-            for (int count : buckets.values()) {
-                double probability = count / (double) totalSamples;
-                entropy += -probability * Math.log(probability) * INV_LN2;
-                sumSquares += 1L * count * count;
-            }
-            double expectedRemain = sumSquares / (double) totalSamples;
-            if (entropy > bestEntropy
-                    || (entropy == bestEntropy && (expectedRemain < bestExpectedRemaining
-                            || (expectedRemain == bestExpectedRemaining && answers.contains(guess))))) {
-                bestEntropy = entropy;
-                bestExpectedRemaining = expectedRemain;
-                bestGuess = guess;
-            }
-        }
-        return bestGuess;
-    }
-
-    private int[] buildLetterPresenceCounts(List<String> words) {
+    private int[] buildLetterCounts(List<String> words) {
         int[] counts = new int[26];
-        for (String word : words) {
-            boolean[] seen = new boolean[26];
-            for (int c = 0; c < word.length(); c++) {
-                int index = word.charAt(c) - 'a';
-                if (0 <= index && index < 26 && !seen[index]) {
-                    seen[index] = true;
-                    counts[index]++;
-                }
+        for (String w : words) {
+            for (int i = 0; i < w.length(); i++) {
+                char c = w.charAt(i);
+                if (c >= 'a' && c <= 'z')
+                    counts[c - 'a']++;
             }
         }
         return counts;
+    }
+
+    private double scoreDistinct(String w, int[] counts) {
+        boolean[] seen = new boolean[26];
+        int sum = 0;
+        for (int i = 0; i < w.length(); i++) {
+            char c = w.charAt(i);
+            if (c < 'a' || c > 'z')
+                continue;
+            int idx = c - 'a';
+            if (!seen[idx]) {
+                seen[idx] = true;
+                sum += counts[idx];
+            }
+        }
+        return (double) sum / Math.max(1, w.length());
+    }
+
+    private List<String> buildGuessPool(List<String> candidates, int k) {
+        LinkedHashSet<String> pool = new LinkedHashSet<>(candidates);
+        int[] counts = buildLetterCounts(candidates);
+        List<String> allGuesses = new ArrayList<>(dictionary.getGuessWordsList());
+
+        Map<String, Double> score = new HashMap<>(allGuesses.size());
+        for (String w : allGuesses) {
+            score.put(w, scoreDistinct(w, counts));
+        }
+
+        allGuesses.sort((a, b) -> Double.compare(score.get(b), score.get(a)));
+
+        int added = 0;
+        for (String w : allGuesses) {
+            if (pool.add(w)) {
+                if (++added >= k)
+                    break;
+            }
+        }
+        return new ArrayList<>(pool);
+    }
+
+    private String bestByPartitionOverPool(List<String> answers, List<String> guessPool) {
+        int n = answers.size();
+        String best = guessPool.get(0);
+        double bestExpected = Double.POSITIVE_INFINITY;
+        int bestWorst = Integer.MAX_VALUE;
+
+        for (String guess : guessPool) {
+            Map<WordleWord, Integer> buckets = new HashMap<>();
+            for (String ans : answers) {
+                WordleWord fb = WordleAnswer.matchWord(guess, ans);
+                buckets.put(fb, buckets.getOrDefault(fb, 0) + 1);
+            }
+            double expected = 0.0;
+            int worst = 0;
+            for (int size : buckets.values()) {
+                double p = (double) size / n;
+                expected += p * size;
+                worst = Math.max(worst, size);
+            }
+            if (expected < bestExpected || (expected == bestExpected && worst < bestWorst)) {
+                bestExpected = expected;
+                bestWorst = worst;
+                best = guess;
+            }
+        }
+        return best;
+
     }
 }
