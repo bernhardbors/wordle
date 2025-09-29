@@ -50,8 +50,11 @@ public class AIPerformance {
 		List<IStrategy> strategies = new ArrayList<>();
         strategies.add(new RandomStrategy(dictionary));
         strategies.add(new EliminateStrategy(dictionary));
-        //strategies.add(new FrequencyStrategy(dictionary));
-        //strategies.add(new MyStrategy(dictionary));
+        strategies.add(new FrequencyStrategy(dictionary));
+        strategies.add(new MyStrategy(dictionary));
+        strategies.add(new MyStrategy2(dictionary));
+        strategies.add(new MyStrategy3(dictionary));
+        strategies.add(new MyStrategy4(dictionary));
 		return strategies;
 	}
 

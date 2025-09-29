@@ -2,10 +2,8 @@ package no.uib.inf102.wordle.model.word;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Random;
 
-import no.uib.inf102.util.MapUtil;
 import no.uib.inf102.wordle.model.Dictionary;
 
 /**
@@ -93,11 +91,34 @@ public class WordleAnswer {
                     + " and answer = " + answer);
 
         //TODO: fix this implementation
-
+        
         AnswerType[] feedback = new AnswerType[wordLength];
+        HashMap<Character, Integer> countMap = new HashMap<>();
+    
         for (int i = 0; i < wordLength; i++) {
-        	feedback[i] = AnswerType.WRONG;
+            char g = guess.charAt(i);
+            char a = answer.charAt(i);
+            if (g == a) {
+                feedback[i] = AnswerType.CORRECT;
+            } else {
+                countMap.put(a, countMap.getOrDefault(a, 0) + 1);
+            }
         }
+        
+        for (int i = 0; i < wordLength; i++) {
+            if (feedback[i] == AnswerType.CORRECT) {
+                continue;
+            }
+            char g = guess.charAt(i);
+            Integer left = countMap.get(g);
+            if (left != null && left > 0) {
+                feedback[i] = AnswerType.MISPLACED;
+                countMap.put(g, left - 1);
+            } else {
+                feedback[i] = AnswerType.WRONG;
+            }
+        } 
+
         return new WordleWord(guess,feedback);
     }
 }

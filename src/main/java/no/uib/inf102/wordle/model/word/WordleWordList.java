@@ -58,7 +58,14 @@ public class WordleWordList {
 	 * @param feedback
 	 */
 	public void eliminateWords(WordleWord feedback) {
-		//TODO: implement this
+		List<String> survivors = new ArrayList<>();
+
+		for (String candidate : possibleAnswers) {
+			if (WordleWord.isPossibleWord(candidate, feedback)) {
+				survivors.add(candidate);
+			}
+		}
+		this.possibleAnswers = survivors;
 	}
 
 	/**
@@ -85,5 +92,9 @@ public class WordleWordList {
 	 */
 	public int wordLength() {
 		return allWords.WORD_LENGTH;
+	}
+
+	public List<String> getPossibleAnswers() {
+		return possibleAnswers;
 	}
 }
