@@ -6,6 +6,13 @@ import no.uib.inf102.wordle.model.word.WordleAnswer;
 import no.uib.inf102.wordle.model.word.WordleWord;
 import no.uib.inf102.wordle.model.word.WordleWordList;
 
+/**
+ * An AI strategy for Wordle that improves upon FrequencyStrategy by
+ * switching between multiple heuristics depending on the size of the
+ * remaining candidate set. The strategy aims to maximize information
+ * gain early, refine guesses with partitioning when feasible, and use
+ * frequency-based guessing in the final phase.
+ */
 public class MyStrategy implements IStrategy {
 
     private final Dictionary dictionary;
@@ -17,6 +24,14 @@ public class MyStrategy implements IStrategy {
     private static final int PROBE_K = 40;
     private static final double POS_WEIGHT = 0.3;
 
+    /**
+     * Constructs a new strategy using the given dictionary. The internal
+     * word list and frequency strategy are initialized and ready for
+     * use.
+     *
+     * @param dictionary the dictionary with valid guesses and possible
+     *                   answers; must not be {@code null
+     */
     public MyStrategy(Dictionary dictionary) {
         this.dictionary = dictionary;
         this.freqStrategy = new FrequencyStrategy(dictionary);
